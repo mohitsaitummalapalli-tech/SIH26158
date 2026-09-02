@@ -1,0 +1,13 @@
+{
+  "pipeline_name": "sih26158_test_harness",
+  "version": "0.1.0",
+  "mock_mode": false,
+  "strict_validation": true,
+  "ingestion": {
+    "extract_fps": 1.0,
+    "max_resolution": [640, 480]
+  },
+  "quality_filter": {
+    "min_laplacian_variance": 50.0
+  }
+}

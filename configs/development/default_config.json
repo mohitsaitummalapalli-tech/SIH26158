@@ -1,0 +1,22 @@
+{
+  "pipeline_name": "sih26158_provisional_dev",
+  "version": "0.1.0",
+  "ingestion": {
+    "extract_fps": 2.0,
+    "max_resolution": [1920, 1080],
+    "telemetry_source": "srt_embedded"
+  },
+  "quality_filter": {
+    "min_laplacian_variance": 100.0,
+    "reject_blurry_frames": true
+  },
+  "geometry": {
+    "model_backbone": "dust3r_vit_large",
+    "device": "cuda",
+    "fp16": true
+  },
+  "geospatial": {
+    "target_crs": "EPSG:32643",
+    "solve_sim3": true
+  }
+}
