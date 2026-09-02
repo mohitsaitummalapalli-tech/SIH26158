@@ -94,6 +94,14 @@ from src.geometry.mvs import (
     MVSValidator,
 )
 
+from src.geometry.dense_stereo import (
+    DenseStereoConfig,
+    StereoRectificationResult,
+    DenseStereoResult,
+    StereoRectifier,
+    ClassicalStereoSGBMEstimator,
+)
+
 __all__ = [
     "EvaluationLevel",
     "PipelineStageStatus",
@@ -171,4 +179,9 @@ __all__ = [
     "GeometricDepthConsistencyChecker",
     "VoxelGridDensePointFusion",
     "MVSValidator",
+    "DenseStereoConfig",
+    "StereoRectificationResult",
+    "DenseStereoResult",
+    "StereoRectifier",
+    "ClassicalStereoSGBMEstimator",
 ]
