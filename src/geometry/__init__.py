@@ -102,6 +102,27 @@ from src.geometry.dense_stereo import (
     ClassicalStereoSGBMEstimator,
 )
 
+from src.geometry.dense_point_generation import (
+    PointRejectionReason,
+    DensePointGeneratorConfig,
+    ValidatedDensePoint,
+    DensePointGenerationResult,
+    DensePointBackprojector,
+    DensePointGeometricValidator,
+    DensePointGenerator,
+)
+
+from src.geometry.dense_fusion import (
+    FusionRejectionReason,
+    FusionWeightingScheme,
+    SingleViewRetentionPolicy,
+    DenseFusionConfig,
+    FusedDensePoint,
+    DensePointCluster,
+    DenseFusionResult,
+    DensePointFusionEngine,
+)
+
 __all__ = [
     "EvaluationLevel",
     "PipelineStageStatus",
@@ -184,4 +205,19 @@ __all__ = [
     "DenseStereoResult",
     "StereoRectifier",
     "ClassicalStereoSGBMEstimator",
+    "PointRejectionReason",
+    "DensePointGeneratorConfig",
+    "ValidatedDensePoint",
+    "DensePointGenerationResult",
+    "DensePointBackprojector",
+    "DensePointGeometricValidator",
+    "DensePointGenerator",
+    "FusionRejectionReason",
+    "FusionWeightingScheme",
+    "SingleViewRetentionPolicy",
+    "DenseFusionConfig",
+    "FusedDensePoint",
+    "DensePointCluster",
+    "DenseFusionResult",
+    "DensePointFusionEngine",
 ]
