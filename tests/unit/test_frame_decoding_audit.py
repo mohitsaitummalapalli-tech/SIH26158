@@ -79,7 +79,7 @@ def bframe_timeline() -> CanonicalTimeline:
             frame_id=f"bframe_{i:04d}",
             frame_index=i,
             timestamp_seconds=i * 0.5,
-            pts=int(i * 500),
+            pts=i * 500,
             timescale=1000,
             source_video="bframe_test.mp4",
             width=640,
@@ -171,6 +171,8 @@ def test_random_access_vs_sequential_consistency(vfr_timeline):
 
         assert random_frame.frame_id == seq_frame.frame_id
         assert random_frame.timestamp_seconds == seq_frame.timestamp_seconds
+        assert random_frame.data is not None
+        assert seq_frame.data is not None
         assert np.array_equal(random_frame.data, seq_frame.data)
 
 
@@ -203,6 +205,7 @@ def test_asymmetric_color_channel_order():
     frame = decoder.decode_frame(0)
 
     assert frame.channel_layout == "RGB"
+    assert frame.data is not None
     # Top-Left quadrant (y: 0..240, x: 0..320) must be Pure RED: [255, 0, 0]
     tl_pixel = frame.data[50, 50]
     assert tl_pixel[0] == 255 # Red
@@ -230,4 +233,5 @@ def test_explicit_resize_preservation(vfr_timeline):
     assert frame.original_width == 640
     assert frame.original_height == 480
     assert frame.timestamp_seconds == vfr_timeline[2].timestamp_seconds
+    assert frame.data is not None
     assert frame.data.shape == (240, 320, 3)
