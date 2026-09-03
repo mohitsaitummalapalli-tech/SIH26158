@@ -150,6 +150,21 @@ from src.geometry.texture_association import (
     VisibilityAwareTextureAssociator,
 )
 
+from src.geometry.texture_reconstruction import (
+    OperationalTextureState,
+    TextureReconstructionConfig,
+    CandidateColorSample,
+    FusedTextureElement,
+    TexelProvenance,
+    UVChart,
+    ReconstructedTextureAtlas,
+    weighted_median,
+    sample_bilinear_rgb,
+    evaluate_surface_point_observations,
+    fuse_multiview_candidates,
+    MultiViewTextureReconstructor,
+)
+
 __all__ = [
     "EvaluationLevel",
     "PipelineStageStatus",
@@ -268,4 +283,16 @@ __all__ = [
     "SurfaceTextureAssociationMap",
     "DeterministicAABBBVH",
     "VisibilityAwareTextureAssociator",
+    "OperationalTextureState",
+    "TextureReconstructionConfig",
+    "CandidateColorSample",
+    "FusedTextureElement",
+    "TexelProvenance",
+    "UVChart",
+    "ReconstructedTextureAtlas",
+    "weighted_median",
+    "sample_bilinear_rgb",
+    "evaluate_surface_point_observations",
+    "fuse_multiview_candidates",
+    "MultiViewTextureReconstructor",
 ]
