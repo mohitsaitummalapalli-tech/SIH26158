@@ -1,7 +1,7 @@
-"""Geospatial module: Coordinate normalization (WGS84 -> ECEF -> ENU), CRS contracts, and metadata."""
+"""Geospatial module: Coordinate normalization, Sim(3) metric estimation, and georeferencing."""
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict, Any
 
 from src.geospatial.normalization import (
     WGS84_A,
@@ -22,6 +22,76 @@ from src.geospatial.normalization import (
     ecef_to_geodetic,
     ecef_to_enu,
     enu_to_ecef,
+)
+
+from src.geospatial.coordinates import (
+    GeospatialAnchorOrigin,
+    AltitudeReferenceType,
+    wgs84_to_ecef,
+    ecef_to_wgs84,
+    wgs84_to_enu,
+    enu_to_wgs84,
+    build_rotation_enu_from_ecef,
+)
+
+from src.geospatial.sim3 import (
+    Sim3,
+    UncertaintyType,
+    Sim3TransformContract,
+    solve_sim3_umeyama,
+)
+
+from src.geospatial.lever_arm import (
+    LeverArm,
+    LeverArmStatus,
+)
+
+from src.geospatial.telemetry_observation import (
+    TelemetryObservation,
+    ObservationClassification,
+    GnssAccuracyInterpretation,
+    construct_gnss_covariance,
+)
+
+from src.geospatial.synchronization import (
+    RawTelemetryRecord,
+    TelemetrySynchronizer,
+)
+
+from src.geospatial.observability import (
+    ScaleObservabilityReport,
+    FullSim3ObservabilityStatus,
+    check_scale_observability,
+)
+
+from src.geospatial.robust_estimation import (
+    RobustSim3Estimator,
+    RobustSim3Result,
+    EstimationDiagnostics,
+    compute_isoperimetric_quotient,
+)
+
+from src.geospatial.metric_state import (
+    MetricScaleStatus,
+    MetricStateMachine,
+    MetricStateTransition,
+)
+
+from src.geospatial.validation import (
+    GroundControlPoint,
+    MetricValidator,
+    ValidationReport,
+    CheckpointResidual,
+)
+
+from src.geospatial.uncertainty import (
+    UncertaintyPropagator,
+    Sim3UncertaintyReport,
+)
+
+from src.geospatial.pipeline import (
+    GeospatialMetricReconstructor,
+    GeospatialMetricReconstructionResult,
 )
 
 
@@ -66,25 +136,32 @@ class Sim3Transform:
     target_crs: str = "local_topocentric_enu"
     residual_rmse_meters: Optional[float] = None
     num_anchors_used: int = 0
+    translation_enu: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+    scale_uncertainty_1sigma: float = 0.0
+    uncertainty_type: str = "UNAVAILABLE"
+
+    def __post_init__(self) -> None:
+        if self.translation_vector and self.translation_enu == (0.0, 0.0, 0.0) and len(self.translation_vector) == 3:
+            self.translation_enu = (self.translation_vector[0], self.translation_vector[1], self.translation_vector[2])
+        elif self.translation_enu != (0.0, 0.0, 0.0) and self.translation_vector == [0.0, 0.0, 0.0]:
+            self.translation_vector = [self.translation_enu[0], self.translation_enu[1], self.translation_enu[2]]
 
 
 @dataclass
 class GeoreferenceMetadata:
-    """Complete georeferencing manifest attached to exported 3D spatial models.
-    
-    Contains the transformation parameters from model coordinates to global Projected CRS.
-    """
+    """Complete georeferencing manifest attached to exported 3D spatial models."""
     target_crs: str  # e.g., "EPSG:32643" (WGS84 UTM Zone 43N)
     origin_latitude_deg: float
     origin_longitude_deg: float
     origin_altitude_meters: float
     sim3_transform: Sim3Transform
-    bounds_utm_min: Tuple[float, float, float] = (0.0, 0.0, 0.0)  # (Easting, Northing, Height)
-    bounds_utm_max: Tuple[float, float, float] = (0.0, 0.0, 0.0)  # (Easting, Northing, Height)
-    geoid_model: str = "EGM96"  # Geoid model for orthometric height conversion
+    bounds_utm_min: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+    bounds_utm_max: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+    geoid_model: str = "EGM96"
 
 
 __all__ = [
+    # WGS84 Constants & Normalization
     "WGS84_A",
     "WGS84_INV_F",
     "WGS84_F",
@@ -106,4 +183,42 @@ __all__ = [
     "CRSInfo",
     "Sim3Transform",
     "GeoreferenceMetadata",
+    # Phase 3E.5 Components
+    "GeospatialAnchorOrigin",
+    "AltitudeReferenceType",
+    "wgs84_to_ecef",
+    "ecef_to_wgs84",
+    "wgs84_to_enu",
+    "enu_to_wgs84",
+    "build_rotation_enu_from_ecef",
+    "Sim3",
+    "UncertaintyType",
+    "Sim3TransformContract",
+    "solve_sim3_umeyama",
+    "LeverArm",
+    "LeverArmStatus",
+    "TelemetryObservation",
+    "ObservationClassification",
+    "GnssAccuracyInterpretation",
+    "construct_gnss_covariance",
+    "RawTelemetryRecord",
+    "TelemetrySynchronizer",
+    "ScaleObservabilityReport",
+    "FullSim3ObservabilityStatus",
+    "check_scale_observability",
+    "RobustSim3Estimator",
+    "RobustSim3Result",
+    "EstimationDiagnostics",
+    "compute_isoperimetric_quotient",
+    "MetricScaleStatus",
+    "MetricStateMachine",
+    "MetricStateTransition",
+    "GroundControlPoint",
+    "MetricValidator",
+    "ValidationReport",
+    "CheckpointResidual",
+    "UncertaintyPropagator",
+    "Sim3UncertaintyReport",
+    "GeospatialMetricReconstructor",
+    "GeospatialMetricReconstructionResult",
 ]
