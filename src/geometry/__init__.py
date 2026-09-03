@@ -136,6 +136,20 @@ from src.geometry.surface_reconstruction import (
     AlphaComplexSurfaceReconstructor,
 )
 
+from src.geometry.texture_association import (
+    TextureSampleType,
+    SampleObservationState,
+    TextureQueryStatus,
+    DecisionStatus,
+    TextureAssociationConfig,
+    TextureSourceCamera,
+    CandidateDecisionRecord,
+    TextureObservation,
+    SurfaceTextureAssociationMap,
+    DeterministicAABBBVH,
+    VisibilityAwareTextureAssociator,
+)
+
 __all__ = [
     "EvaluationLevel",
     "PipelineStageStatus",
@@ -243,4 +257,15 @@ __all__ = [
     "DensePointCloudValidator",
     "LocalPCANormalEstimator",
     "AlphaComplexSurfaceReconstructor",
+    "TextureSampleType",
+    "SampleObservationState",
+    "TextureQueryStatus",
+    "DecisionStatus",
+    "TextureAssociationConfig",
+    "TextureSourceCamera",
+    "CandidateDecisionRecord",
+    "TextureObservation",
+    "SurfaceTextureAssociationMap",
+    "DeterministicAABBBVH",
+    "VisibilityAwareTextureAssociator",
 ]
