@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Phase3E6BenchmarkResultV2",
+  "description": "Rigorous non-collapse machine-readable benchmark schema for SIH26158 Phase 3E.6",
+  "type": "object",
+  "required": [
+    "benchmark_id",
+    "dataset_id",
+    "evidence_level",
+    "software_commit",
+    "result_state",
+    "evaluable_axes",
+    "not_evaluable_axes",
+    "claim_authorization",
+    "metrics",
+    "timing_profile"
+  ],
+  "properties": {
+    "benchmark_id": {
+      "type": "string",
+      "pattern": "^BM-[A-Za-z0-9_-]+-[A-F0-9]{8}$"
+    },
+    "dataset_id": {
+      "type": "string"
+    },
+    "evidence_level": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 5
+    },
+    "software_commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$"
+    },
+    "result_state": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "FAIL",
+        "NOT_EVALUABLE",
+        "CONTRACT_VIOLATION",
+        "INSUFFICIENT_EVIDENCE",
+        "INCONCLUSIVE"
+      ]
+    },
+    "validation_scope": {
+      "type": "string",
+      "enum": [
+        "METRIC_ENGINE_CONTRACT",
+        "END_TO_END_RECONSTRUCTION"
+      ]
+    },
+    "validation_context": {
+      "type": "object"
+    },
+    "evaluable_axes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "A_VISUAL",
+          "B_GEOMETRIC",
+          "C_METRIC_SCALE",
+          "D_GEOSPATIAL",
+          "E_TEXTURE",
+          "F_UNCERTAINTY",
+          "G_COMPLETENESS"
+        ]
+      }
+    },
+    "not_evaluable_axes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "A_VISUAL",
+          "B_GEOMETRIC",
+          "C_METRIC_SCALE",
+          "D_GEOSPATIAL",
+          "E_TEXTURE",
+          "F_UNCERTAINTY",
+          "G_COMPLETENESS"
+        ]
+      }
+    },
+    "claim_authorization": {
+      "type": "object",
+      "required": ["claims_allowed", "claims_blocked", "policy_status"],
+      "properties": {
+        "claims_allowed": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "claims_blocked": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "policy_status": {
+          "type": "string",
+          "enum": [
+            "PASS",
+            "FAIL",
+            "CONTRACT_VIOLATION"
+          ]
+        },
+        "violation_reasons": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "reference_partition": {
+      "type": "object",
+      "properties": {
+        "estimation_reference_set": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "calibration_reference_set": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "validation_reference_set": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "properties": {
+        "geometric": { "type": "object" },
+        "metric_scale": { "type": "object" },
+        "geospatial": { "type": "object" },
+        "trajectory": { "type": "object" },
+        "texture": { "type": "object" },
+        "completeness": { "type": "object" },
+        "uncertainty": { "type": "object" }
+      }
+    },
+    "timing_profile": {
+      "type": "object",
+      "required": ["total_wall_clock_sec", "pipeline_fps", "latency_tier"],
+      "properties": {
+        "total_wall_clock_sec": { "type": "number", "minimum": 0.0 },
+        "stage_wall_clock_sec": { "type": "object" },
+        "input_frames": { "type": "integer", "minimum": 0 },
+        "decoded_duration_sec": { "type": "number", "minimum": 0.0 },
+        "pipeline_fps": { "type": "number", "minimum": 0.0 },
+        "real_time_factor": { "type": "number", "minimum": 0.0 },
+        "latency_tier": {
+          "type": "string",
+          "enum": ["OFFLINE_BATCH", "NEAR_REAL_TIME", "REAL_TIME", "NOT_CLASSIFIED"]
+        },
+        "hardware_environment": { "type": "object" }
+      }
+    },
+    "reproducibility": {
+      "type": "object",
+      "properties": {
+        "target_level": {
+          "type": "string",
+          "enum": ["R0_METADATA", "R1_NUMERICAL", "R2_DETERMINISTIC", "R3_BITWISE"]
+        },
+        "observed_level": { "type": "string" },
+        "numerical_tolerance": { "type": "number" },
+        "deterministic_seed": { "type": "integer" }
+      }
+    },
+    "created_at_utc": { "type": "string" }
+  }
+}

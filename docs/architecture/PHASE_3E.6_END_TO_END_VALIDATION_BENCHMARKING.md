@@ -1,0 +1,864 @@
+# Phase 3E.6 — End-to-End Validation, Benchmarking & Evidence
+## Architecture & Scientific Benchmark Contract Specification (v2)
+
+**Document Status**: LOCKED & APPROVED FOR IMPLEMENTATION (v2.0.0-LOCKED)  
+**Implementation Phase**: PHASE 3E.6 ACTIVE IMPLEMENTATION  
+**Baseline Locks**:
+- Baseline Commit: `20c62a1` (Phase 3E.5 Geospatial & Metric Reconstruction)
+- Clean Repository Lineage: `46fcc74` / `20c62a1`
+- Design Lock Timestamp: `2026-09-03T10:38:00Z`
+- Design SHA-256 (Pre-Lock): `e4855597311cfe0e1712c411c5786bcecf123c175b5f9da8dcc6aa36d5f0c4cb`
+
+---
+
+## 1. Executive Purpose & Core Scientific Principles
+
+The preceding engineering phases established the full monocular drone reconstruction pipeline:
+1. **Video Ingestion & Quality Diagnostics (Phases 1A–2A)**: Demuxing, PTS timestamp parsing, exposure/motion blur audit ([`docs/architecture/SYSTEM_ARCHITECTURE.md`](SYSTEM_ARCHITECTURE.md)).
+2. **Telemetry Ingestion & Synchronization (Phase 2B)**: DJI SRT/generic CSV adaptation, EGM96 geoid separation, temporal interpolation, and GNSS covariance modeling ([`docs/architecture/TELEMETRY_ADAPTERS.md`](TELEMETRY_ADAPTERS.md)).
+3. **Classical Geometry & Sparse SfM (Phases 3A–3D)**: SIFT/ORB extraction, two-view epipolar geometry, incremental triangulation, and gauge-fixed Levenberg-Marquardt bundle adjustment ([`docs/architecture/PHASE_3_CLASSICAL_GEOMETRY.md`](PHASE_3_CLASSICAL_GEOMETRY.md)).
+4. **Dense Multi-View Stereo (Phases 3E.1–3E.3)**: Epipolar rectification, patchmatch disparity estimation, depth unprojection in `RECONSTRUCTION_UNITS`, and multi-view geometric fusion ([`docs/architecture/PHASE_3E_DENSE_MVS.md`](PHASE_3E_DENSE_MVS.md)).
+5. **Surface & Texture Reconstruction (Phase 3E.4)**: Watertight/manifold alpha-complex meshing, visibility culling, graph-cut seam optimization, and Poisson texture blending ([`docs/architecture/PHASE_3E.4_STEP_4_TEXTURE_RECONSTRUCTION.md`](PHASE_3E.4_STEP_4_TEXTURE_RECONSTRUCTION.md)).
+6. **Geospatial & Metric Reconstruction (Phase 3E.5)**: Topocentric WGS84 $\to$ ECEF $\to$ ENU conversion, 7-DoF $\text{Sim}(3)$ alignment, airframe lever-arm compensation, Huber robust M-estimation, Fisher conditioning, and hold-out GCP validation ([`docs/architecture/PHASE_3E.5_GEOSPATIAL_METRIC_RECONSTRUCTION.md`](PHASE_3E.5_GEOSPATIAL_METRIC_RECONSTRUCTION.md)).
+
+### 1.1 Objective of Phase 3E.6
+Phase 3E.6 establishes an unyielding scientific validation harness. The objective is **NEVER** to manufacture an ungrounded "accuracy" number or claim synthetic perfection. The objective is to evaluate:
+1. **Geometric Fidelity**: Does the pipeline reconstruct true 3D spatial geometry without synthetic hallucinations or scale drift?
+2. **Metric & Geospatial Correctness**: Does the model preserve metric dimensions and geospatial coordinates when verified against independent hold-out checkpoints?
+3. **Scene Completeness**: What fraction of the physically visible scene is reconstructed, and what fraction is unobserved or missing?
+4. **Graceful Degradation**: How does quality degrade under adverse flight conditions (blur, low overlap, GNSS outages, collinear paths)?
+5. **Error Budget Attribution**: Which individual pipeline stages dominate observed spatial errors?
+6. **Deterministic Reproducibility**: Can experimental conditions and outputs be independently verified across runs?
+
+---
+
+## 2. Non-Collapse Validation Architecture
+
+> [!CRITICAL]
+> **The Non-Collapse Axiom:**  
+> Reconstruction quality can NEVER be expressed as a single composite scalar index. Under no circumstances may geometric accuracy, visual aesthetics, and geospatial alignment be collapsed into a single "score".
+
+The framework enforces strict mathematical separation across seven mutually orthogonal evaluation axes:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           SEVEN QUALITY AXES                                │
+├──────────────────────────┬──────────────────────────────────────────────────┤
+│ Axis                     │ Physical & Mathematical Meaning                  │
+├──────────────────────────┼──────────────────────────────────────────────────┤
+│ A. Visual Quality        │ Photometric reprojection fidelity, seam quality  │
+│ B. Geometric Consistency │ Multi-view ray intersection, reprojection RMSE   │
+│ C. Metric Accuracy       │ Euclidean distance & scale error vs true metric  │
+│ D. Geospatial Alignment  │ Absolute WGS84/ENU positioning vs hold-out CKPs  │
+│ E. Texture Coverage      │ Proportion of physical surface textured by camera│
+│ F. Uncertainty Quality   │ Calibration & ranking of predicted uncertainty   │
+│ G. Completeness & Recall │ Surface area & point density coverage in ROI     │
+└──────────────────────────┴──────────────────────────────────────────────────┘
+```
+
+### 2.1 Strict Invalidation Corollaries
+1. **Visual Quality $\ne$ Geometric Accuracy**: A smooth textured mesh generated by surface smoothing or interpolation may diverge by metres from true physical geometry.
+2. **Low Reprojection Error $\ne$ Ground-Truth Accuracy**: Reprojection error $\epsilon_{\text{reproj}}$ measures ray intersection in pixel space. An unscaled reconstruction in `RECONSTRUCTION_UNITS` can have sub-pixel reprojection error while scale is unknown or off by $10^6$.
+3. **Low GNSS Fitting Residual $\ne$ Metric Validation**: An overfitted $\text{Sim}(3)$ transformation fitted to noisy GNSS observations produces small training residuals while independent checkpoint errors diverge.
+4. **High Texture Coverage $\ne$ Geometric Precision**: A flat or distorted mesh completely textured does not imply that underlying vertices match the physical surface.
+
+---
+
+## 3. Validation Evidence Hierarchy & Status Model
+
+### 3.1 Six-Tier Ground-Truth Hierarchy
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          GROUND TRUTH HIERARCHY                             │
+├───────┬─────────────────────────────────┬───────────────────────────────────┤
+│ Level │ Ground Truth Standard           │ Permitted Scientific Claims       │
+├───────┼─────────────────────────────────┼───────────────────────────────────┤
+│ 0     │ No Reference Ground Truth       │ Reprojection consistency only;    │
+│       │                                 │ NO metric accuracy claims.        │
+├───────┼─────────────────────────────────┼───────────────────────────────────┤
+│ 1     │ Telemetry Consistency Only      │ Internal flight path agreement;   │
+│       │ (Raw drone GNSS / Barometer)    │ NO independent accuracy claims.   │
+├───────┼─────────────────────────────────┼───────────────────────────────────┤
+│ 2     │ Known Synthetic Geometry        │ Algorithmic recovery precision;   │
+│       │ (Exact CAD / synthetic models)  │ NO real-world generalization.     │
+├───────┼─────────────────────────────────┼───────────────────────────────────┤
+│ 3     │ Independent Measured Distances  │ Segment scale error over baselines│
+│       │ (Laser / tape check segments)   │ NO global georeference claims.    │
+├───────┼─────────────────────────────────┼───────────────────────────────────┤
+│ 4     │ Surveyed 3D Checkpoints (CKPs)  │ Absolute horizontal/vertical RMSE │
+│       │ (RTK GNSS / Total Station)      │ on independent hold-out targets.  │
+├───────┼─────────────────────────────────┼───────────────────────────────────┤
+│ 5     │ High-Density Reference Scan     │ Complete point-to-point Chamfer & │
+│       │ (Terrestrial Laser Scan / TLS)  │ Hausdorff surface metrology.      │
+└───────┴─────────────────────────────────┴───────────────────────────────────┘
+```
+
+### 3.2 Benchmark Result Status Model
+Every validation test or benchmark execution must terminate in one of six explicit states:
+- `PASS`: Test executed, valid evidence available, all pre-registered acceptance criteria satisfied.
+- `FAIL`: Test executed, valid evidence available, one or more acceptance criteria breached.
+- `NOT_EVALUABLE`: Required ground-truth evidence, camera visibility, or sample count is absent.
+  > **Crucial Rule**: `NOT_EVALUABLE` is strictly distinct from `PASS` and `FAIL`. It indicates evidence absence and never implies operational failure or success.
+- `CONTRACT_VIOLATION`: An implementation breached an architectural rule (e.g. data leakage, unauthorized alignment, illegal claim emission).
+- `INSUFFICIENT_EVIDENCE`: Sample count $N$ is below the statistical power threshold required to draw a conclusion.
+- `INCONCLUSIVE`: Execution finished with mixed, conflicting, or numerically unstable indicators.
+
+---
+
+## 4. Seven-Axis Evaluation Model & Availability Matrix
+
+Not all axes can be evaluated on every dataset. Evaluation availability is strictly gated by evidence availability:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    VALIDATION AXIS AVAILABILITY MATRIX                      │
+├──────────────────────────┬─────────┬─────────┬─────────┬─────────┬──────────┤
+│ Quality Axis             │ Level 0 │ Level 1 │ Level 2 │ Level 3 │ Level 4/5│
+├──────────────────────────┼─────────┼─────────┼─────────┼─────────┼──────────┤
+│ A. Visual Diagnostics    │ YES     │ YES     │ YES     │ YES     │ YES      │
+│ B. Geometric Consistency │ YES     │ YES     │ YES     │ YES     │ YES      │
+│ C. Metric Scale Accuracy │ N/E     │ N/E     │ YES     │ YES     │ YES      │
+│ D. Geospatial Alignment  │ N/E     │ N/E     │ N/E     │ N/E     │ YES      │
+│ E. Texture Coverage      │ YES     │ YES     │ YES     │ YES     │ YES      │
+│ F. Uncertainty Quality   │ DIAG    │ DIAG    │ YES     │ DIAG    │ YES      │
+│ G. Complete Surface Met. │ N/E     │ N/E     │ YES     │ N/E     │ YES (L5) │
+└──────────────────────────┴─────────┴─────────┴─────────┴─────────┴──────────┘
+Legend: YES = Fully Evaluable; N/E = NOT_EVALUABLE; DIAG = Diagnostic Only (No calibration claims).
+```
+
+For every benchmark execution, the harness must output:
+`evidence_level`, `evaluable_axes`, `not_evaluable_axes`, and `blocked_claims`.
+
+---
+
+## 5. Dataset Taxonomy & Manifest Specification
+
+Every dataset ingested for validation must belong to one of five immutable classes:
+- **Class A (Synthetic Controlled)**: Procedural rendering, exact CAD geometry, exact pinhole camera, zero or controlled noise.
+- **Class B (Semi-Synthetic Sensor Simulation)**: Photorealistic simulation with simulated IMU/GNSS sensor noise, rolling shutter, and multi-path.
+- **Class C (Real Drone with Flight Telemetry)**: Real flight video and flight log (DJI SRT/CSV), without independent surveyed ground markers.
+- **Class D (Real Drone with Independent Surveyed Checkpoints)**: Real flight with pre-surveyed RTK ground control targets partitioned into GCPs and CKPs.
+- **Class E (Real Drone without Ground Truth)**: Uncalibrated public drone video without telemetry or survey markers.
+
+### 5.1 Dataset Manifest Contract
+Every dataset requires an immutable, cryptographically hashed manifest (`dataset_manifest.json`):
+```json
+{
+  "dataset_id": "VAL-DRONE-QUARRY-04",
+  "taxonomy_class": "CLASS_D_REAL_SURVEYED",
+  "acquisition_conditions": {
+    "lighting": "overcast_diffuse",
+    "wind_speed_mps": 3.2,
+    "weather": "dry",
+    "scene_type": "open_pit_quarry"
+  },
+  "frame_count": 240,
+  "image_resolution": [3840, 2160],
+  "camera_calibration": {
+    "model": "PINHOLE_RADIAL_TANGENTIAL",
+    "focal_length_px": 2840.5,
+    "principal_point_px": [1918.2, 1079.1],
+    "distortion_coefficients": [-0.048, 0.003, 0.0001, -0.0002]
+  },
+  "telemetry_metadata": {
+    "has_telemetry": true,
+    "sampling_rate_hz": 10.0,
+    "gnss_format": "WGS84_ELLIPSOIDAL",
+    "horizontal_accuracy_m": 1.2,
+    "vertical_accuracy_m": 2.0
+  },
+  "ground_truth_metadata": {
+    "has_ground_truth": true,
+    "ground_truth_type": "SURVEYED_CHECKPOINTS_CSV",
+    "coordinate_reference_system": "EPSG:32643_UTM_ZONE_43N",
+    "survey_accuracy_m": 0.015,
+    "total_targets_surveyed": 12,
+    "estimation_gcp_count": 7,
+    "validation_ckp_count": 5
+  },
+  "sha256_checksum": "9e8a7b6c5d4e..."
+}
+```
+
+---
+
+## 6. Hold-Out & Anti-Leakage Contracts
+
+### 6.1 Strict Control Point vs. Checkpoint Partition
+To prevent benchmark overfitting and self-fulfilling validation:
+$$\mathcal{S}_{\text{surveyed}} = \mathcal{S}_{\text{estimation}} \cup \mathcal{S}_{\text{validation}}, \quad \mathcal{S}_{\text{estimation}} \cap \mathcal{S}_{\text{validation}} = \emptyset$$
+- **Estimation Set ($\mathcal{S}_{\text{estimation}}$ / GCPs)**: Available to the pipeline for 7-DoF $\text{Sim}(3)$ estimation, bundle adjustment georeferencing, or lever-arm refinement.
+- **Validation Set ($\mathcal{S}_{\text{validation}}$ / CKPs)**: Strictly withheld from the entire estimation pipeline. Evaluated only post-convergence.
+
+### 6.2 Anti-Leakage Enforcement
+The benchmark harness must inspect memory and configuration manifests:
+$$\text{Assert}\left( \text{IDs}(\mathcal{S}_{\text{estimation}}) \cap \text{IDs}(\mathcal{S}_{\text{validation}}) == \emptyset \right)$$
+Any overlap triggers immediate `CONTRACT_VIOLATION`.
+
+### 6.3 Synthetic Hidden Ground-Truth Partition
+In Class A/B synthetic benchmarks:
+- **Public / Generator Parameters**: Scene bounds, initial rough camera intrinsics, flight corridor envelope.
+- **Hidden Evaluation Truth**: True camera poses $\mathbf{T}_i^*$, true depth maps $\mathbf{D}_i^*$, true mesh vertices $\mathcal{M}^*$, true ray visibility masks $\mathcal{V}^*$.
+- The evaluated algorithm MUST NOT receive privileged access to hidden evaluation truth. Any access triggers `MUT-SYNTHETIC-TRUTH-LEAKAGE` violation.
+
+---
+
+## 7. End-to-End Immutable Pipeline & Execution Contract
+
+The complete evaluation pipeline executes fifteen auditable stages:
+```
+Video + Telemetry Input
+  │
+  ├─► [1. Ingestion & Demuxing] ──► Decoded Frame Buffers + Raw Telemetry Log
+  ├─► [2. Frame Quality Audit]  ──► Exposure, Sharpness, Blur Diagnostics
+  ├─► [3. Keyframe Selection]   ──► Baseline-Optimized Keyframe Sequence
+  ├─► [4. Feature Detection]    ──► Multi-Scale SIFT/ORB Descriptors
+  ├─► [5. Epipolar Matching]    ──► Essential Matrix & Inlier Matches
+  ├─► [6. Incremental SfM]      ──► Sparse 3D Cloud + Camera Poses
+  ├─► [7. Bundle Adjustment]    ──► Gauge-Fixed Levenberg-Marquardt
+  ├─► [8. Dense Stereo]         ──► Rectified Disparity Maps
+  ├─► [9. Point Generation]     ──► Backprojected Points in RECONSTRUCTION_UNITS
+  ├─► [10. Dense Fusion]        ──► Multi-View Geometrically Filtered Point Cloud
+  ├─► [11. Surface Meshing]     ──► Watertight Alpha-Complex Mesh
+  ├─► [12. Texture Mapping]     ──► Graph-Cut Seams & Poisson Blended Atlas
+  ├─► [13. Sim(3) Alignment]    ──► Huber Robust Metric & Geospatial Transform
+  ├─► [14. Hold-Out Validation] ──► Independent Checkpoint Residual Analysis
+  └─► [15. Benchmark Report]    ──► Machine-Readable Multi-Axis Result Manifest
+```
+
+### 7.1 Immutable Stage Artifact Contract
+Every stage produces an immutable record containing:
+- `stage_name`: Pipeline stage identifier.
+- `dataset_id`: Input dataset identifier.
+- `software_commit`: Engine Git commit SHA.
+- `config_hash`: SHA-256 of active parameters.
+- `input_hashes`: SHA-256 hashes of upstream dependencies.
+- `output_hashes`: SHA-256 hashes of generated artifacts.
+- `execution_timestamps`: UTC start and finish timestamps.
+- `diagnostics`: Machine-readable stage telemetry (memory, runtime, iterations).
+
+---
+
+## 8. Geometric Metrics Specification
+
+For every metric in this specification, an explicit contract defines evidence prerequisites, mathematical rules, and validity gates:
+
+### 8.1 Point-to-Point Euclidean Distance
+- **Evidence Required**: Estimated point cloud $\mathcal{P}_{\text{est}}$ and independent reference cloud $\mathcal{P}_{\text{gt}}$.
+- **Output Unit**: Metres $[m]$ (or `RECONSTRUCTION_UNITS` if unscaled).
+- **Reference Required**: Yes (Level 2 or Level 5).
+- **Hold-out Required**: Yes.
+- **Alignment Permitted**: None for metric evaluation; rigid $\text{SE}(3)$ or $\text{Sim}(3)$ permitted only for relative shape benchmarking if fully logged.
+- **Classification**: Claim-producing (at Level 2/5).
+- **Invalid / NOT_EVALUABLE**: Emits `NOT_EVALUABLE` if Level 0, 1, 3, or 4 dataset is evaluated.
+- **Formulation**:
+  $$d_{\text{p2p}}(\mathbf{p}, \mathcal{P}_{\text{gt}}) = \min_{\mathbf{q} \in \mathcal{P}_{\text{gt}}} \| \mathbf{p} - \mathbf{q} \|_2$$
+
+### 8.2 Point-to-Plane Distance
+- **Evidence Required**: $\mathcal{P}_{\text{est}}$, $\mathcal{P}_{\text{gt}}$, and ground-truth surface normals $\mathbf{n}_{\mathbf{q}}$.
+- **Output Unit**: Metres $[m]$.
+- **Reference Required**: Yes (Level 2 or Level 5 with certified normals).
+- **Classification**: Claim-producing.
+- **Formulation**:
+  $$d_{\text{p2pl}}(\mathbf{p}, \mathcal{P}_{\text{gt}}) = | (\mathbf{p} - \mathbf{q}^*) \cdot \mathbf{n}_{\mathbf{q}^*} | \quad \text{where } \mathbf{q}^* = \arg\min_{\mathbf{q} \in \mathcal{P}_{\text{gt}}} \| \mathbf{p} - \mathbf{q} \|_2$$
+
+### 8.3 Bidirectional Chamfer Distance
+- **Evidence Required**: $\mathcal{P}_{\text{est}}$, $\mathcal{P}_{\text{gt}}$, and predefined evaluation Region of Interest (ROI).
+- **Output Unit**: Metres $[m]$.
+- **Formulation**:
+  $$d_{\text{Chamfer}}(\mathcal{P}_{\text{est}}, \mathcal{P}_{\text{gt}}) = \frac{1}{2 |\mathcal{P}_{\text{est}}|} \sum_{\mathbf{p} \in \mathcal{P}_{\text{est}}} \min_{\mathbf{q} \in \mathcal{P}_{\text{gt}}} \| \mathbf{p} - \mathbf{q} \|_2 + \frac{1}{2 |\mathcal{P}_{\text{gt}}|} \sum_{\mathbf{q} \in \mathcal{P}_{\text{gt}}} \min_{\mathbf{p} \in \mathcal{P}_{\text{est}}} \| \mathbf{q} - \mathbf{p} \|_2$$
+  > **Invariant**: Must be bidirectional. Unidirectional evaluation is caught and rejected by `MUT-06`.
+
+### 8.4 Hausdorff Distance (Max & 95th Percentile)
+- **Output Unit**: Metres $[m]$.
+- **Formulation**:
+  $$d_{\text{H95}}(\mathcal{P}_{\text{est}}, \mathcal{P}_{\text{gt}}) = \max \left( P_{95}\left( \{ \min_{\mathbf{q}} \| \mathbf{p} - \mathbf{q} \|_2 \}_{\mathbf{p}} \right), \; P_{95}\left( \{ \min_{\mathbf{p}} \| \mathbf{q} - \mathbf{p} \|_2 \}_{\mathbf{q}} \right) \right)$$
+
+### 8.5 Surface Normal Angular Deviation
+- **Output Unit**: Degrees $[^\circ]$.
+- **Formulation**:
+  $$\theta_{\text{normal}}(\mathbf{p}) = \arccos \left( \text{clip} \left( | \mathbf{n}_{\mathbf{p}} \cdot \mathbf{n}_{\mathbf{q}^*} |, 0.0, 1.0 \right) \right) \cdot \frac{180}{\pi}$$
+
+---
+
+## 9. Metric Scale & Geometric Accuracy Formulation
+
+### 9.1 Multi-Segment Relative Scale Error
+- **Evidence Required**: At least $M \ge 3$ independent non-collinear segments between surveyed markers $(A_m, B_m)$ with certified distance $D_{\text{ref}, m}$.
+- **Output Unit**: Dimensionless fraction (or percentage $\%$).
+- **Reference Required**: Yes (Level 3, 4, or 5).
+- **Hold-out Required**: Yes (markers must not have been used to fit scale).
+- **Alignment Permitted**: Strictly prohibited. Scale error must evaluate reconstructed metric dimensions directly.
+- **Classification**: Claim-producing.
+- **Formulation**:
+  $$\eta_{\text{scale}, m} = \frac{| D_{\text{est}, m} - D_{\text{ref}, m} |}{D_{\text{ref}, m}}$$
+  Reports: $\text{Median}(\eta_{\text{scale}})$, $\text{RMSE}(\eta_{\text{scale}})$, and $\max(\eta_{\text{scale}})$.
+
+### 9.2 Statistical Estimators for Spatial Residuals
+For any sample of $K$ error vectors $\mathbf{e}_k$:
+- **MAE**: $\frac{1}{K} \sum_{k=1}^K \| \mathbf{e}_k \|_2$
+- **RMSE**: $\sqrt{\frac{1}{K} \sum_{k=1}^K \| \mathbf{e}_k \|_2^2}$
+- **Median**: $\text{median}_{k=1 \dots K}(\| \mathbf{e}_k \|_2)$
+- **95th Percentile ($P_{95}$)**: $\text{percentile}_{95}(\{ \| \mathbf{e}_k \|_2 \}_{k=1}^K)$
+- **Maximum**: $\max_{k=1 \dots K}(\| \mathbf{e}_k \|_2)$
+
+---
+
+## 10. Geospatial Metrics & Checkpoint Residual Analysis
+
+- **Evidence Required**: Hold-out Checkpoints $\mathcal{S}_{\text{validation}}$ with true ENU coordinates $(E_k, N_k, U_k)^T$ tangent to the WGS84 ellipsoid anchor $(\phi_0, \lambda_0, h_0)$.
+- **Output Unit**: Metres $[m]$.
+- **Reference Required**: Yes (Level 4 or Level 5).
+- **Hold-out Required**: Mandatory. $\mathcal{S}_{\text{estimation}} \cap \mathcal{S}_{\text{validation}} = \emptyset$.
+- **Alignment Permitted**: Strictly prohibited. Checkpoint coordinates are evaluated after applying the estimated $\text{Sim}(3)$ transform without subsequent tweaking.
+- **Classification**: Claim-producing.
+- **Invalid / NOT_EVALUABLE**: Emits `NOT_EVALUABLE` if ground checkpoints are missing.
+
+### 10.1 Checkpoint Error Formulations
+$$\Delta E_k = \hat{E}_k - E_k, \quad \Delta N_k = \hat{N}_k - N_k, \quad \Delta U_k = \hat{U}_k - U_k$$
+$$\text{RMSE}_{\text{East}} = \sqrt{\frac{1}{K} \sum_{k=1}^K \Delta E_k^2}, \quad \text{RMSE}_{\text{North}} = \sqrt{\frac{1}{K} \sum_{k=1}^K \Delta N_k^2}, \quad \text{RMSE}_{\text{Up}} = \sqrt{\frac{1}{K} \sum_{k=1}^K \Delta U_k^2}$$
+$$\text{RMSE}_{\text{Horizontal}} = \sqrt{\text{RMSE}_{\text{East}}^2 + \text{RMSE}_{\text{North}}^2}, \quad \text{RMSE}_{\text{3D}} = \sqrt{\text{RMSE}_{\text{East}}^2 + \text{RMSE}_{\text{North}}^2 + \text{RMSE}_{\text{Up}}^2}$$
+
+---
+
+## 11. Camera Trajectory Validation
+
+Trajectory evaluation distinguishes metric/geospatial errors from relative trajectory shape consistency:
+
+```
+Camera Trajectory Evaluation
+  ├── A. Raw / Metric-Frame Trajectory Error (Preserves scale & geospatial frame)
+  ├── B. Sim(3)-Aligned Trajectory Error (Shape consistency only; scale removed)
+  └── C. Relative Pose Error / Drift (RPE, localized over temporal delta Δ)
+```
+
+### 11.1 Raw / Metric-Frame Trajectory Error
+- **Evidence Required**: Reference trajectory poses $\mathbf{T}_{\text{ref}, i} \in \text{SE}(3)$ in the evaluation coordinate frame.
+- **Output Unit**: Metres $[m]$ and Degrees $[^\circ]$.
+- **Alignment Permitted**: Strictly NONE. Evaluates estimated camera centers directly in the metric/geospatial frame.
+- **Classification**: Claim-producing (metric navigation fidelity).
+- **Formulation**:
+  $$\mathbf{e}_{\text{metric}, i} = \| \mathbf{C}_{\text{est}, i} - \mathbf{C}_{\text{ref}, i} \|_2, \quad \text{ATE}_{\text{metric-RMSE}} = \sqrt{\frac{1}{N} \sum_{i=1}^N \mathbf{e}_{\text{metric}, i}^2}$$
+
+### 11.2 Sim(3)-Aligned Trajectory Error
+- **Evidence Required**: $\mathbf{T}_{\text{est}, i}$ and $\mathbf{T}_{\text{ref}, i}$.
+- **Output Unit**: Dimensionless or scaled metres $[m]$.
+- **Alignment Permitted**: $\text{Sim}(3)$ Umeyama alignment permitted ONLY to assess trajectory shape consistency.
+- **Contract Requirement**: The report MUST log:
+  1. Estimated alignment parameters $(s, \mathbf{R}, \mathbf{t})$.
+  2. Degrees of freedom removed (7 DoF).
+  3. Explicit disclaimer: *"Sim(3)-aligned ATE measures relative trajectory shape only; it DOES NOT evaluate absolute scale or geospatial positioning."*
+- **Formulation**:
+  $$\mathbf{C}_{\text{aligned}, i} = s \mathbf{R} \mathbf{C}_{\text{est}, i} + \mathbf{t}, \quad \text{ATE}_{\text{Sim3-RMSE}} = \sqrt{\frac{1}{N} \sum_{i=1}^N \| \mathbf{C}_{\text{aligned}, i} - \mathbf{C}_{\text{ref}, i} \|_2^2}$$
+
+### 11.3 Relative Pose Error (RPE) / Drift
+- **Formulation**:
+  $$\mathbf{E}_{\text{RPE}, i} = \left( \mathbf{T}_{\text{ref}, i}^{-1} \mathbf{T}_{\text{ref}, i+\Delta} \right)^{-1} \left( \mathbf{T}_{\text{est}, i}^{-1} \mathbf{T}_{\text{est}, i+\Delta} \right)$$
+  Reports translational drift $[\text{m}/\Delta]$ and rotational drift $[\text{deg}/\Delta]$.
+
+---
+
+## 12. Texture & Photometric Reprojection Diagnostics
+
+### 12.1 Reprojection PSNR & SSIM Protocol
+- **Evidence Required**: Keyframe camera images $\mathbf{I}_k$, camera poses $\mathbf{T}_k$, camera intrinsics $\mathbf{K}$, and textured mesh $\mathcal{M}$.
+- **Output Unit**: Decibels $[\text{dB}]$ for PSNR; dimensionless $[0.0, 1.0]$ for SSIM.
+- **Reference Required**: No external reference (evaluates against source keyframes).
+- **Classification**: **DIAGNOSTIC ONLY**.
+  > [!CRITICAL]
+  > **No Universal PSNR/SSIM Gates:**  
+  > The framework strictly rejects hard-coded gates such as $\text{PSNR} > 35\text{ dB}$ or $\text{SSIM} > 0.85$ as universal acceptance criteria. Reprojection scores are sensitive to image compression, viewing angle, and exposure shifts. Thresholds must be dataset-specific and pre-registered.
+
+- **Mandatory Reporting Configuration**:
+  Every texture evaluation must document:
+  1. Image resolution and color space (e.g. 4K sRGB).
+  2. Foreground mask definition $\mathcal{M}_k$ (excluding sky and out-of-bounds regions).
+  3. Rendering rasterizer (bilinear vs bicubic, mipmap levels).
+  4. Compression status of source video (H.264/HEVC bitrate).
+  5. Disclaimer: *"Reprojection PSNR/SSIM reflects photometric agreement with source video; it DOES NOT represent radiometric ground-truth accuracy or geometric fidelity."*
+
+---
+
+## 13. Completeness, Coverage & Evidence-Gated Visibility
+
+### 13.1 Rigorous Definitions of Completeness and Precision
+Completeness cannot be evaluated on an unbounded scene. It is defined strictly within a predefined Region of Interest ($\text{ROI}$):
+1. **Geometric Precision**: Fraction of reconstructed samples within distance $\tau$ of reference geometry:
+   $$\text{Precision}(\tau) = \frac{1}{|\mathcal{P}_{\text{est}} \cap \text{ROI}|} \sum_{\mathbf{p} \in \mathcal{P}_{\text{est}} \cap \text{ROI}} \mathbb{I} \left( \min_{\mathbf{q} \in \mathcal{P}_{\text{gt}}} \| \mathbf{p} - \mathbf{q} \|_2 \le \tau \right)$$
+2. **Geometric Recall / Completeness**: Fraction of independent reference samples within $\text{ROI}$ represented by reconstruction:
+   $$\text{Recall}(\tau) = \frac{1}{|\mathcal{P}_{\text{gt}} \cap \text{ROI}|} \sum_{\mathbf{q} \in \mathcal{P}_{\text{gt}} \cap \text{ROI}} \mathbb{I} \left( \min_{\mathbf{p} \in \mathcal{P}_{\text{est}}} \| \mathbf{q} - \mathbf{p} \|_2 \le \tau \right)$$
+3. **Surface-Area Completeness**: Valid only when an independent CAD/TLS continuous reference surface $\mathcal{S}_{\text{ref}}$ exists:
+   $$\mathcal{C}_{\text{surface}} = \frac{\text{Area}(\mathcal{S}_{\text{est}} \cap \mathcal{S}_{\text{ref}} \cap \text{ROI})}{\text{Area}(\mathcal{S}_{\text{ref}} \cap \text{ROI})} \in [0.0, 1.0]$$
+   If ground truth is absent (Level 0/1/3), absolute completeness is `NOT_EVALUABLE`.
+
+### 13.2 Five-State Visibility Evidence Contract
+The framework forbids guessing whether an untextured or unconstructed area is "occluded" versus "unobserved". Regions are classified strictly based on available evidence:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                       VISIBILITY EVIDENCE TAXONOMY                          │
+├───────────────────────┬─────────────────────────────────────────────────────┤
+│ State                 │ Required Mathematical Evidence                      │
+├───────────────────────┼─────────────────────────────────────────────────────┤
+│ OBSERVED              │ Surface point was triangulated by >= 2 cameras with │
+│                       │ optical ray intersection angle >= 5.0 degrees.      │
+├───────────────────────┼─────────────────────────────────────────────────────┤
+│ PHYSICALLY_OCCLUDED   │ Surface point lies within camera frustum, but       │
+│                       │ ray intersects foreground geometry before target.   │
+│                       │ (Requires valid multi-view depth maps or CAD truth).│
+├───────────────────────┼─────────────────────────────────────────────────────┤
+│ UNOBSERVED            │ Surface point was outside all camera frustums       │
+│                       │ throughout the entire flight trajectory.            │
+├───────────────────────┼─────────────────────────────────────────────────────┤
+│ RECONSTRUCTION_MISSING│ Point was observed by cameras, but rejected by MVS  │
+│                       │ fusion, photometric consistency, or meshing gates.  │
+├───────────────────────┼─────────────────────────────────────────────────────┤
+│ UNDETERMINED          │ Evidence is insufficient to distinguish occlusion   │
+│                       │ from missing geometry.                              │
+└───────────────────────┴─────────────────────────────────────────────────────┘
+```
+
+> **Enforcement**: If camera ray visibility masks are absent, missing regions MUST be classified as `UNDETERMINED`. Labeling missing geometry as `PHYSICALLY_OCCLUDED` without ray-tracing evidence is rejected by `MUT-14`.
+
+---
+
+## 14. Uncertainty Calibration & Statistical Diagnostics
+
+### 14.1 Rejection of Universal $\rho > 0.40$ Threshold
+> [!CRITICAL]
+> **Heuristic Confidence $\ne$ Calibrated Probability:**  
+> Pipeline vertex confidence scores and regularized covariance diagonals must NEVER be represented as calibrated Gaussian probabilities.  
+> Hard-coded acceptance thresholds (such as universal $\text{Spearman } \rho > 0.40$) are scientifically unsound and strictly removed from the architecture.
+
+### 14.2 Uncertainty State Model
+Every uncertainty evaluation terminates in one of five states:
+- `NOT_EVALUABLE`: Sample count $N < 30$, or independent reference geometry is absent.
+- `DIAGNOSTIC_ONLY`: Spearman rank correlation computed for exploratory assessment; no statistical calibration claimed.
+- `EVALUATED`: Full statistical envelope computed (Spearman $\rho$, bootstrap 95% CI, p-value).
+- `CALIBRATION_SUPPORTED`: Empirical coverage matches theoretical distribution (e.g. $68.3\% \pm 5\%$ within $1\sigma$) under a pre-registered probabilistic model.
+- `CALIBRATION_NOT_SUPPORTED`: Predicted uncertainty fails to correlate with observed error, or empirical coverage deviates significantly from theoretical quantiles.
+
+### 14.3 Uncertainty Evaluation Protocol
+Where $N \ge 30$ independent error samples $e_i = \| \mathbf{p}_i - \mathbf{q}_i^* \|_2$ and predicted uncertainties $\sigma_i$ exist:
+1. **Rank Correlation**: Report sample count $N$, Spearman rank correlation coefficient $\rho$, asymptotic p-value, and 95% bootstrap confidence interval.
+2. **Quantile Stratification**: Bin points into uncertainty quintiles ($Q_1 \dots Q_5$) and report median observed error per quintile. Monotonic ordering ($\text{MedE}(Q_1) \le \dots \le \text{MedE}(Q_5)$) indicates informative uncertainty ordering.
+3. **Coverage Probability**: If and only if a formal Gaussian error model $\mathbf{e}_i \sim \mathcal{N}(\mathbf{0}, \boldsymbol{\Sigma}_i)$ is claimed:
+   $$\text{Coverage}(k\sigma) = \frac{1}{N} \sum_{i=1}^N \mathbb{I}(e_i \le k \sigma_i)$$
+
+---
+
+## 15. Controlled Robustness & Degradation Experiments
+
+Perturbation experiments evaluate operational boundaries and verify that performance degrades smoothly rather than catastrophically:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    CONTROLLED PERTURBATION EXPERIMENTS                      │
+├───────┬───────────────────────────┬─────────────────────────────────────────┤
+│ ID    │ Perturbation Type         │ Calibrated Sweep Range                  │
+├───────┼───────────────────────────┼─────────────────────────────────────────┤
+│ PERT-1│ Gaussian Image Blur       │ Kernel sigma: 0.5 px to 5.0 px          │
+│ PERT-2│ Motion Blur Kernel        │ Linear motion length: 2 px to 25 px     │
+│ PERT-3│ Compression Bitrate       │ H.264 CRF 18 down to CRF 38             │
+│ PERT-4│ Low Illumination          │ Image gamma scale: 1.0 down to 0.15     │
+│ PERT-5│ Exposure Shift            │ Inter-frame brightness shift: ±0.1 to ±0.8│
+│ PERT-6│ Dynamic Obstacle Ratio    │ Synthetic pedestrian bounding box: 0%-40%│
+│ PERT-7│ Weak Texture Dominance    │ Low-gradient surface area: 0% to 80%    │
+│ PERT-8│ Repeated Texture Grid     │ Periodic tiles: 2x to 16x frequency     │
+│ PERT-9│ GNSS Gaussian Noise       │ Horizontal 1-sigma: 0.1m to 15.0m       │
+│ PERT-10│ GNSS Outlier Infiltration│ Extreme position offsets (50m): 0% to 50%│
+│ PERT-11│ Telemetry Gaps           │ Dropout duration: 1.0s to 15.0s         │
+│ PERT-12│ Shutter Clock Bias       │ Telemetry-to-frame lag: 10ms to 500ms   │
+│ PERT-13│ Focal Length Error       │ Initial calibration error: ±0.5% to ±10%│
+│ PERT-14│ Frame Dropping           │ Subsampling frames: drop 10% to 75%     │
+│ PERT-15│ Reduced Overlap          │ Baseline-to-depth expansion: 80% to 20% │
+│ PERT-16│ Collinear Flight Motion  │ Cross-track deviation: 0m to 5m         │
+│ PERT-17│ Altitude Datum Mismatch  │ Orthometric vs ellipsoidal shift: 35m   │
+└───────┴───────────────────────────┴─────────────────────────────────────────┘
+```
+
+### 15.1 Operating Envelope vs. Failure Boundaries
+- **Supported Envelope**: Regimes where the pipeline is formally guaranteed to converge and emit `SUCCESS` (e.g. overlap $\ge 60\%$, GNSS noise $\le 3\text{m}$, outlier rate $\le 30\%$).
+- **Stress Regimes**: Regimes outside the supported envelope (e.g. overlap $<30\%$, collinear flight). Here the expected behavior is graceful state transition to `SUCCESS_LOW_CONFIDENCE`, `HEURISTIC_UNCERTAINTY`, or explicit rejection (`INSUFFICIENT_INPUT`), NEVER unhandled crashes or fabricated output.
+
+---
+
+## 16. Computational Performance & Timing Protocol
+
+To prevent misleading speed claims, computational performance is audited under strict benchmarking protocols:
+
+### 16.1 Timing Measurement Protocol
+Every timed benchmark must measure and document:
+1. `total_wall_clock_sec`: End-to-end elapsed time from cold start to artifact writing.
+2. `stage_wall_clock_sec`: Per-stage runtime breakdown (Demux, SfM, MVS, Meshing, Texturing, Georeferencing).
+3. `model_initialization_sec`: Cold-start weight/feature model loading time.
+4. `gpu_warmup_sec`: Initial GPU context creation and CUDA kernel compilation time (excluded from steady-state throughput).
+5. `disk_io_policy`: Storage medium (NVMe SSD vs HDD, local vs network share).
+6. `hardware_environment`: Exact CPU model, physical RAM, GPU model, driver version, OS.
+7. `input_characteristics`: Input resolution (e.g. $3840 \times 2160$), frame count ($N$), decoded video duration ($T_{\text{video}}$).
+
+### 16.2 Throughput vs. Latency Metrics
+- **Pipeline Throughput**:
+  $$\text{PIPELINE\_FPS} = \frac{N_{\text{frames}}}{T_{\text{wall\_clock}}}$$
+- **Real-Time Factor (RTF)**:
+  $$\text{RTF} = \frac{T_{\text{wall\_clock}}}{T_{\text{video}}}$$
+  $\text{RTF} \le 1.0$ indicates that the system processes video faster than real-time playback.
+- **Operational Latency Tiers (Labels Only, Not Scientific Truth)**:
+  - *Offline Batch*: $\text{PIPELINE\_FPS} < 1.0$
+  - *Near-Real-Time (NRT)*: $1.0 \le \text{PIPELINE\_FPS} < 15.0$
+  - *Real-Time (RT)*: $\text{PIPELINE\_FPS} \ge 30.0$ at native resolution across the complete pipeline.
+  > **Enforcement**: Claiming "real-time capability" because an isolated sub-stage (e.g. feature detection) exceeds 30 FPS while total pipeline FPS is 0.2 is strictly prohibited.
+
+---
+
+## 17. Reproducibility Levels & Environmental Determinism
+
+The framework replaces naive "bitwise repeatability" with four tiered reproducibility standards:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          REPRODUCIBILITY LEVELS                             │
+├───────┬────────────────────────────┬────────────────────────────────────────┤
+│ Level │ Standard                   │ Verification Requirement               │
+├───────┼────────────────────────────┼────────────────────────────────────────┤
+│ R0    │ Metadata Reproducibility   │ Manifests, configs, and software commit│
+│       │                            │ are documented; output may vary.       │
+├───────┼────────────────────────────┼────────────────────────────────────────┤
+│ R1    │ Numerical Tolerance        │ Output point coordinates match within  │
+│       │ Reproducibility            │ numerical tolerance: max |Δp| < 1e-5.   │
+├───────┼────────────────────────────┼────────────────────────────────────────┤
+│ R2    │ Deterministic Structure    │ Identical graph topology, vertex count,│
+│       │ Reproducibility            │ and inlier sets across repeated runs.  │
+├───────┼────────────────────────────┼────────────────────────────────────────┤
+│ R3    │ Bitwise Exact              │ Identical SHA-256 binary hash across   │
+│       │ Reproducibility            │ generated output files on identical OS.│
+└───────┴────────────────────────────┴────────────────────────────────────────┤
+```
+
+### 17.1 Permissible Sources of Non-Bitwise Variation (at R1)
+The contract acknowledges legitimate physical sources of non-bitwise variation across hardware:
+- Parallel multi-threaded floating-point summation non-associativity: $(a + b) + c \ne a + (b + c)$.
+- Non-deterministic GPU thread scheduling in asynchronous atomic operations.
+- Dynamic CPU/GPU math library differences (MKL vs OpenBLAS vs Apple Accelerate).
+- AVX-512 vs FMA3 floating-point contraction variations.
+
+> **Contract Rule**: A benchmark operating under Level R1 MUST declare its numerical tolerance $\epsilon_{\text{tol}}$. It is NOT deemed failed simply because binary hashes differ, provided $\| \mathbf{p}^{(1)} - \mathbf{p}^{(2)} \| < \epsilon_{\text{tol}}$.
+
+---
+
+## 18. Frame Order & Temporal Invariance Contracts
+
+Drone video is an inherently chronological sensor stream. The framework establishes strict rules regarding frame ordering:
+
+### 18.1 Temporal Ordering Invariance
+- **Chronological Modules**: Video decoding, motion blur analysis, temporal synchronization, keyframe selection, and incremental SfM require strict chronological ordering based on authoritative Presentation Timestamps (PTS):
+  $$\text{PTS}(f_0) \le \text{PTS}(f_1) \le \dots \le \text{PTS}(f_{N-1})$$
+- **Prohibition on Arbitrary Permutation**: Arbitrary random permutation of input frames is mathematically invalid for chronological stages. Demanding that incremental SfM yield identical graphs under randomly shuffled video frames is rejected by `MUT-12`.
+
+### 18.2 Collection Order Invariance
+- **Unordered Collections**: Set-level operations where order has no physical meaning (e.g. final fused point cloud spatial bounding box, unordered checkpoint residual evaluations) MUST be invariant to indexing order.
+
+---
+
+## 19. Empirical Error-Budget Policy
+
+> [!CRITICAL]
+> **Rejection of Linear Error Addition:**  
+> Errors across the photogrammetric pipeline do NOT add linearly. Non-linear bundle adjustment, projective geometry, and robust M-estimation introduce complex cross-coupling.
+
+The framework mandates an **Empirical Sensitivity Attribution Budget**:
+$$\mathbf{E}_{\text{total}} = \mathcal{F}(\mathbf{e}_{\text{calib}}, \mathbf{e}_{\text{pose}}, \mathbf{e}_{\text{depth}}, \mathbf{e}_{\text{fusion}}, \mathbf{e}_{\text{surface}}, \mathbf{e}_{\text{geo}})$$
+
+Contributions are quantified experimentally through step-by-step oracle substitution:
+1. **$\Delta E_{\text{calib}}$**: Discrepancy when true ground-truth intrinsics $\mathbf{K}^*$ replace estimated calibration $\hat{\mathbf{K}}$.
+2. **$\Delta E_{\text{pose}}$**: Discrepancy when true ground-truth camera poses $\mathbf{T}^*$ replace estimated poses $\hat{\mathbf{T}}$.
+3. **$\Delta E_{\text{depth}}$**: Discrepancy when true synthetic depth maps $\mathbf{D}^*$ replace patchmatch depth estimates $\hat{\mathbf{D}}$.
+4. **$\Delta E_{\text{fusion}}$**: Geometric deviation between raw unprojected points and fused consensus points.
+5. **$\Delta E_{\text{surface}}$**: Discrepancy introduced by alpha-complex mesh simplification.
+6. **$\Delta E_{\text{geo}}$**: Error contribution from $\text{Sim}(3)$ transformation uncertainty $\boldsymbol{\Sigma}_{\boldsymbol{\theta}}$.
+
+---
+
+## 20. Machine-Readable Claim-Policy Enforcement Matrix
+
+The benchmark result manifest must contain explicit, machine-readable claim authorization tags. Attempting to emit a prohibited claim causes the harness to fail with `CONTRACT_VIOLATION`:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    MACHINE-READABLE CLAIM-POLICY MATRIX                     │
+├────────────────────────────┬─────────┬─────────┬─────────┬─────────┬────────┤
+│ Claim Key                  │ Level 0 │ Level 1 │ Level 2 │ Level 3 │ Level 4│
+├────────────────────────────┼─────────┼─────────┼─────────┼─────────┼────────┤
+│ reprojection_consistency   │ ALLOWED │ ALLOWED │ ALLOWED │ ALLOWED │ ALLOWED│
+│ relative_motion_profile    │ ALLOWED │ ALLOWED │ ALLOWED │ ALLOWED │ ALLOWED│
+│ visual_appearance_psnr     │ ALLOWED │ ALLOWED │ ALLOWED │ ALLOWED │ ALLOWED│
+│ gnss_fitting_residual      │ BLOCKED │ ALLOWED │ ALLOWED │ ALLOWED │ ALLOWED│
+│ synthetic_recovery_acc     │ BLOCKED │ BLOCKED │ ALLOWED │ BLOCKED │ BLOCKED│
+│ segment_scale_accuracy     │ BLOCKED │ BLOCKED │ ALLOWED │ ALLOWED │ ALLOWED│
+│ horizontal_checkpoint_rmse │ BLOCKED │ BLOCKED │ BLOCKED │ BLOCKED │ ALLOWED│
+│ vertical_checkpoint_rmse   │ BLOCKED │ BLOCKED │ BLOCKED │ BLOCKED │ ALLOWED│
+│ surveyed_3d_accuracy       │ BLOCKED │ BLOCKED │ BLOCKED │ BLOCKED │ ALLOWED│
+│ universal_drone_accuracy   │ BLOCKED │ BLOCKED │ BLOCKED │ BLOCKED │ BLOCKED│
+└────────────────────────────┴─────────┴─────────┴─────────┴─────────┴────────┘
+```
+
+---
+
+## 21. Machine-Readable Benchmark Result JSON Schema
+
+All benchmark executions serialize into a standard JSON document validated against `benchmark_result_schema_v2.json`:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Phase3E6BenchmarkResultV2",
+  "type": "object",
+  "required": [
+    "benchmark_id",
+    "dataset_id",
+    "evidence_level",
+    "software_commit",
+    "result_state",
+    "evaluable_axes",
+    "not_evaluable_axes",
+    "claim_authorization",
+    "metrics",
+    "timing_profile"
+  ],
+  "properties": {
+    "benchmark_id": { "type": "string" },
+    "dataset_id": { "type": "string" },
+    "evidence_level": { "type": "integer", "minimum": 0, "maximum": 5 },
+    "software_commit": { "type": "string", "pattern": "^[0-9a-f]{7,40}$" },
+    "result_state": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "FAIL",
+        "NOT_EVALUABLE",
+        "CONTRACT_VIOLATION",
+        "INSUFFICIENT_EVIDENCE",
+        "INCONCLUSIVE"
+      ]
+    },
+    "evaluable_axes": { "type": "array", "items": { "type": "string" } },
+    "not_evaluable_axes": { "type": "array", "items": { "type": "string" } },
+    "claim_authorization": {
+      "type": "object",
+      "required": ["claims_allowed", "claims_blocked"],
+      "properties": {
+        "claims_allowed": { "type": "array", "items": { "type": "string" } },
+        "claims_blocked": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "properties": {
+        "geometric": { "type": "object" },
+        "metric_scale": { "type": "object" },
+        "geospatial": { "type": "object" },
+        "trajectory": { "type": "object" },
+        "texture": { "type": "object" },
+        "completeness": { "type": "object" },
+        "uncertainty": { "type": "object" }
+      }
+    },
+    "timing_profile": {
+      "type": "object",
+      "required": ["total_wall_clock_sec", "pipeline_fps", "latency_tier"],
+      "properties": {
+        "total_wall_clock_sec": { "type": "number" },
+        "pipeline_fps": { "type": "number" },
+        "latency_tier": { "type": "string", "enum": ["OFFLINE_BATCH", "NEAR_REAL_TIME", "REAL_TIME"] }
+      }
+    }
+  }
+}
+```
+
+---
+
+## 22. Categorized Systematic Test Matrix (45 Scenarios)
+
+The test matrix plans 45 validation scenarios categorized across functional domains.  
+*(In this design phase, all test scenarios are explicitly designated as `PLANNED`)*:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    CATEGORIZED TEST PLAN (DESIGN v2)                        │
+├─────────────┬───────────────────┬───────────────────────────────────────────┤
+│ Category    │ Test ID           │ Test Scenario Focus                       │
+├─────────────┼───────────────────┼───────────────────────────────────────────┤
+│ DATASET /   │ TEST-3E6-01       │ Class A synthetic identity (0 error check)│
+│ EVIDENCE    │ TEST-3E6-02       │ Level 0 evidence gate blocks accuracy     │
+│             │ TEST-3E6-03       │ Level 1 telemetry gate restricts claims   │
+│             │ TEST-3E6-04       │ Class D surveyed manifest validation      │
+├─────────────┼───────────────────┼───────────────────────────────────────────┤
+│ GEOMETRY    │ TEST-3E6-05       │ Bidirectional Chamfer distance convergence│
+│             │ TEST-3E6-06       │ Point-to-plane error vs CAD normal        │
+│             │ TEST-3E6-07       │ Hausdorff 95th percentile outlier bounds  │
+│             │ TEST-3E6-08       │ Surface normal angular deviation median   │
+│             │ TEST-3E6-09       │ F1-score precision/recall at tau = 0.05m  │
+├─────────────┼───────────────────┼───────────────────────────────────────────┤
+│ METRIC      │ TEST-3E6-10       │ Known isotropic scale recovery (s = 2.5)  │
+│ SCALE       │ TEST-3E6-11       │ Multi-segment relative scale error (<0.5%)│
+│             │ TEST-3E6-12       │ Scale invariance under unit change (m/km) │
+├─────────────┼───────────────────┼───────────────────────────────────────────┤
+│ GEOSPATIAL  │ TEST-3E6-13       │ Hold-out CKP East/North/Up RMSE (<0.3m)   │
+│             │ TEST-3E6-14       │ Checkpoint max error bounds verification  │
+│             │ TEST-3E6-15       │ Topocentric ENU to ECEF round-trip error  │
+├─────────────┼───────────────────┼───────────────────────────────────────────┤
+│ TRAJECTORY  │ TEST-3E6-16       │ Raw metric-frame ATE translation RMSE     │
+│             │ TEST-3E6-17       │ Sim(3)-aligned ATE shape error logging    │
+│             │ TEST-3E6-18       │ Relative Pose Error (RPE) drift rate      │
+├─────────────┼───────────────────┼───────────────────────────────────────────┤
+│ TEXTURE     │ TEST-3E6-19       │ Reprojection PSNR/SSIM diagnostic logging │
+│             │ TEST-3E6-20       │ Seam edge photometric discontinuity index │
+│             │ TEST-3E6-21       │ Radiometric calibration claim gate check  │
+├─────────────┼───────────────────┼───────────────────────────────────────────┤
+│ COMPLETENESS│ TEST-3E6-22       │ Surface completeness within specified ROI │
+│             │ TEST-3E6-23       │ Five-state visibility evidence tagging    │
+│             │ TEST-3E6-24       │ Undetermined state for missing ray masks  │
+├─────────────┼───────────────────┼───────────────────────────────────────────┤
+│ UNCERTAINTY │ TEST-3E6-25       │ Sample count < 30 emits NOT_EVALUABLE     │
+│             │ TEST-3E6-26       │ Spearman rank correlation diagnostic      │
+│             │ TEST-3E6-27       │ Uncertainty quintile error stratification │
+│             │ TEST-3E6-28       │ Coverage probability under Gaussian claim │
+├─────────────┼───────────────────┼───────────────────────────────────────────┤
+│ ROBUSTNESS  │ TEST-3E6-29       │ Motion blur degradation curve             │
+│             │ TEST-3E6-30       │ GNSS outlier Huber rejection threshold    │
+│             │ TEST-3E6-31       │ Telemetry dropout interpolation bounds    │
+│             │ TEST-3E6-32       │ Shutter clock bias offset compensation    │
+│             │ TEST-3E6-33       │ Focal length drift self-calibration       │
+│             │ TEST-3E6-34       │ Reduced baseline overlap (<30% stress)    │
+│             │ TEST-3E6-35       │ Collinear trajectory axial mode handling  │
+│             │ TEST-3E6-36       │ Stationary hover SCALE_NOT_OBSERVABLE     │
+│             │ TEST-3E6-37       │ Orthometric vs ellipsoidal datum mismatch │
+├─────────────┼───────────────────┼───────────────────────────────────────────┤
+│ REPRODUCIB. │ TEST-3E6-38       │ Level R1 numerical tolerance verification │
+│             │ TEST-3E6-39       │ Level R2 topological mesh reproducibility │
+│             │ TEST-3E6-40       │ Level R3 bitwise repeatability check      │
+├─────────────┼───────────────────┼───────────────────────────────────────────┤
+│ PROVENANCE  │ TEST-3E6-41       │ Full pipeline artifact SHA-256 integrity  │
+│             │ TEST-3E6-42       │ Experiment manifest reproducibility audit │
+├─────────────┼───────────────────┼───────────────────────────────────────────┤
+│ CLAIM-POLICY│ TEST-3E6-43       │ Blocked claim emission triggers failure   │
+│             │ TEST-3E6-44       │ No universal accuracy assertion check     │
+├─────────────┼───────────────────┼───────────────────────────────────────────┤
+│ ANTI-LEAKAGE│ TEST-3E6-45       │ GCP/CKP partition intersection assert     │
+└─────────────┴───────────────────┴───────────────────────────────────────────┘
+```
+
+---
+
+## 23. Categorized Adversarial Mutation Plan (18 Attacks)
+
+The mutation plan attacks potential cheats, mathematical bugs, and invalid reporting modes.  
+*(Design status: `PLANNED`)*:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    ADVERSARIAL MUTATION ATTACK MATRIX                       │
+├────────┬───────────────────────────────────┬────────────────────────────────┤
+│ Mut ID │ Adversarial Action Under Test     │ Target Detection Rule          │
+├────────┼───────────────────────────────────┼────────────────────────────────┤
+│ MUT-01 │ Use reconstruction cloud as GT    │ Fails: Requires independent    │
+│        │ (Self-evaluation cheat)           │ reference hash mismatch assert.│
+├────────┼───────────────────────────────────┼────────────────────────────────┤
+│ MUT-02 │ Apply ICP alignment to hold-out   │ Fails: Hold-out CKPs must not  │
+│        │ checkpoints before computing error│ be modified by alignment.      │
+├────────┼───────────────────────────────────┼────────────────────────────────┤
+│ MUT-03 │ Leak hold-out CKPs into Sim(3) fit│ Fails: Partition intersection  │
+│        │ (Data leakage cheat)              │ audit detects non-empty set.   │
+├────────┼───────────────────────────────────┼────────────────────────────────┤
+│ MUT-04 │ Report GNSS training residual as  │ Fails: Claim-policy auditor    │
+│        │ independent metric accuracy       │ blocks residual as accuracy.   │
+├────────┼───────────────────────────────────┼────────────────────────────────┤
+│ MUT-05 │ Silently drop failed test runs    │ Fails: Execution manifest run  │
+│        │ to inflate benchmark pass rates   │ counter audit (total == run).  │
+├────────┼───────────────────────────────────┼────────────────────────────────┤
+│ MUT-06 │ One-way Chamfer Distance only     │ Fails: Bidirectional Chamfer   │
+│        │ (Precision-only reporting cheat)  │ balance invariant test.        │
+├────────┼───────────────────────────────────┼────────────────────────────────┤
+│ MUT-07 │ Swap East and North coordinate ax.│ Fails: Geospatial checkpoint   │
+│        │ in topocentric validation         │ residual vector test.          │
+├────────┼───────────────────────────────────┼────────────────────────────────┤
+│ MUT-08 │ Invert scale ratio formula        │ Fails: Multi-segment scale     │
+│        │ (|d_est - d_ref| / d_est)         │ direction assertion.           │
+├────────┼───────────────────────────────────┼────────────────────────────────┤
+│ MUT-09 │ Trajectory alignment removes error│ Fails: MUT-TRAJ-ALIGNMENT-     │
+│        │ without documenting Sim(3) scale  │ REMOVES-ERROR catches disguise.│
+├────────┼───────────────────────────────────┼────────────────────────────────┤
+│ MUT-10 │ Represent heuristic confidence as │ Fails: Probabilistic normality │
+│        │ calibrated Gaussian probability   │ calibration assertion.         │
+├────────┼───────────────────────────────────┼────────────────────────────────┤
+│ MUT-11 │ Leak hidden synthetic ground truth│ Fails: MUT-SYNTHETIC-TRUTH-    │
+│        │ into evaluated reconstruction     │ LEAKAGE harness gatekeeper.    │
+├────────┼───────────────────────────────────┼────────────────────────────────┤
+│ MUT-12 │ Shuffled frame input expected to  │ Fails: Chronological PTS order │
+│        │ match chronological SfM output    │ violation gatekeeper.          │
+├────────┼───────────────────────────────────┼────────────────────────────────┤
+│ MUT-13 │ Label run failed when R1 tolerance│ Fails: Level R1 tolerance      │
+│        │ is met but bitwise hash differs   │ contract compliance check.     │
+├────────┼───────────────────────────────────┼────────────────────────────────┤
+│ MUT-14 │ Classify missing geometry as      │ Fails: Ray-tracing visibility  │
+│        │ PHYSICALLY_OCCLUDED without rays  │ evidence contract gate.        │
+├────────┼───────────────────────────────────┼────────────────────────────────┤
+│ MUT-15 │ Report surface completeness       │ Fails: ROI reference surface   │
+│        │ without independent reference ROI │ availability prerequisite test.│
+├────────┼───────────────────────────────────┼────────────────────────────────┤
+│ MUT-16 │ Claim true colorimetric accuracy  │ Fails: Radiometric response    │
+│        │ without radiometric calibration   │ calibration prerequisite test. │
+├────────┼───────────────────────────────────┼────────────────────────────────┤
+│ MUT-17 │ Assert universal PSNR/SSIM gate   │ Fails: Pre-registered threshold│
+│        │ without dataset pre-registration  │ requirement audit.             │
+├────────┼───────────────────────────────────┼────────────────────────────────┤
+│ MUT-18 │ Invert covariance scale transform │ Fails: Unit rescaling (m vs km)│
+│        │ (S^(-1) instead of S on D_geo)    │ invariance test.               │
+└────────┴───────────────────────────────────┴────────────────────────────────┘
+```
+
+---
+
+## 24. Real-World Limitations & Scientific Evidence Policy
+
+1. **Absence of Millimeter Survey Targets in Local Flight Logs**:
+   Real drone datasets currently in the repository provide video and flight telemetry (Class C / Level 1). They DO NOT include millimeter-level surveyed checkpoints.
+2. **Policy Against Result Fabrication**:
+   The validation engine MUST emit `evidence_level = 1` or `evidence_level = 0` for these flights. Fabricating synthetic checkpoint coordinates and pretending they represent physical ground markers is strictly prohibited.
+3. **Valid Role of Synthetic Data**:
+   Synthetic datasets (Class A/B) are fully authorized for algorithmic precision and regression testing. However, all generated outputs must be explicitly tagged as `"SYNTHETIC_VERIFICATION"`.
+
+---
+
+## 25. Implementation Boundary (Design Only)
+
+This document represents **DESIGN & CONTRACT SPECIFICATION ONLY**.
+- **No Production Code**: Zero Python benchmark modules or CLI tools are created in this phase.
+- **No Production Tests**: Zero executable test scripts are created in this phase.
+- **No Baseline Modification**: Locked Phase 3E.0–3E.5 code remains untouched.
+- **No Commits or Pushes**: The workspace remains uncommitted.
+
+---
+
+## 26. Final Design Acceptance Checklist
+
+All requirements of Design v2 are formally satisfied:
+- [x] Universal Spearman $\rho > 0.40$ threshold removed; replaced with evidence-based uncertainty state model (`NOT_EVALUABLE`, `DIAGNOSTIC_ONLY`, `EVALUATED`, `CALIBRATION_SUPPORTED`, `CALIBRATION_NOT_SUPPORTED`).
+- [x] Universal PSNR $>35\text{ dB}$ / SSIM $>0.85$ gates removed; established as pre-registered photometric diagnostics only.
+- [x] Absolute Trajectory Error explicitly separated into Raw/Metric-Frame ATE and Sim(3)-Aligned ATE.
+- [x] Five-state visibility evidence model established (`OBSERVED`, `PHYSICALLY_OCCLUDED`, `UNOBSERVED`, `RECONSTRUCTION_MISSING`, `UNDETERMINED`).
+- [x] Completeness strictly defined with explicit reference ROI and visibility domain.
+- [x] Latency measurement protocol defined, distinguishing throughput, latency, and real-time capability.
+- [x] Robustness perturbations framed as controlled degradation curves rather than universal success guarantees.
+- [x] Synthetic hidden ground-truth leakage contract formalized (`MUT-SYNTHETIC-TRUTH-LEAKAGE`).
+- [x] Temporal order invariance separated from collection order invariance; arbitrary video shuffling rejected.
+- [x] Four-tier reproducibility hierarchy defined (R0 to R3) accommodating floating-point and GPU variations.
+- [x] Seven-axis evaluation availability matrix tied directly to evidence levels.
+- [x] Machine-enforceable claim-policy matrix and JSON schema specified.
+- [x] Hold-out set protection enforced with non-empty intersection assertion.
+- [x] Empirical error budget decomposition protocol specified.
+- [x] 45 categorized validation scenarios planned.
+- [x] 18 adversarial mutation attacks planned.
+- [x] Result status model defined (`PASS`, `FAIL`, `NOT_EVALUABLE`, `CONTRACT_VIOLATION`, `INSUFFICIENT_EVIDENCE`, `INCONCLUSIVE`).
+- [x] Design-only boundary preserved; zero production code or baseline modifications.

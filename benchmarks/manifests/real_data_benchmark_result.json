@@ -1,0 +1,92 @@
+{
+  "benchmark_id": "BM-REAL-FLIGHT-UNAVAILABLE-AAB6C3EC",
+  "dataset_id": "REAL-FLIGHT-UNAVAILABLE",
+  "evidence_level": 0,
+  "software_commit": "20c62a1",
+  "result_state": "INSUFFICIENT_EVIDENCE",
+  "validation_scope": "END_TO_END_RECONSTRUCTION",
+  "validation_context": {
+    "end_to_end_reconstruction": false,
+    "ground_truth_used_for_reconstruction": false,
+    "ground_truth_used_for_evaluation_only": false,
+    "accuracy_claim_authorized": false,
+    "description": "Real data audit: No flight assets in data/raw/. Evaluation is NOT_EVALUABLE."
+  },
+  "evaluable_axes": [
+    "A_VISUAL",
+    "B_GEOMETRIC",
+    "E_TEXTURE",
+    "F_UNCERTAINTY"
+  ],
+  "not_evaluable_axes": [
+    "C_METRIC_SCALE",
+    "D_GEOSPATIAL",
+    "G_COMPLETENESS"
+  ],
+  "claim_authorization": {
+    "claims_allowed": [
+      "relative_motion_profile",
+      "reprojection_consistency",
+      "visual_appearance_psnr"
+    ],
+    "claims_blocked": [
+      "gnss_fitting_residual",
+      "horizontal_checkpoint_rmse",
+      "probabilistic_gaussian_coverage",
+      "radiometric_color_accuracy",
+      "segment_scale_accuracy",
+      "surface_mesh_chamfer",
+      "surveyed_3d_accuracy",
+      "synthetic_recovery_acc",
+      "universal_drone_accuracy",
+      "vertical_checkpoint_rmse"
+    ],
+    "policy_status": "PASS",
+    "violation_reasons": []
+  },
+  "metrics": {
+    "real_data_status": "INSUFFICIENT_EVIDENCE",
+    "message": "No real flight assets present in data/raw/. Real-data accuracy evaluation is NOT_EVALUABLE.",
+    "blocked_claims": [
+      "gnss_fitting_residual",
+      "horizontal_checkpoint_rmse",
+      "probabilistic_gaussian_coverage",
+      "radiometric_color_accuracy",
+      "segment_scale_accuracy",
+      "surface_mesh_chamfer",
+      "surveyed_3d_accuracy",
+      "synthetic_recovery_acc",
+      "universal_drone_accuracy",
+      "vertical_checkpoint_rmse"
+    ]
+  },
+  "timing_profile": {
+    "total_wall_clock_sec": 6.999980541877449e-07,
+    "stage_wall_clock_sec": {},
+    "input_frames": 0,
+    "decoded_duration_sec": 0.0,
+    "pipeline_fps": 0.0,
+    "real_time_factor": 0.0,
+    "latency_tier": "NOT_CLASSIFIED",
+    "hardware_environment": {
+      "os": "Windows",
+      "os_release": "11",
+      "os_version": "10.0.26200",
+      "machine": "AMD64",
+      "processor": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+      "python_version": "3.14.7",
+      "total_ram_gb": 0.0,
+      "cpu_count_logical": 16,
+      "cpu_count_physical": 16,
+      "gpu_available": false
+    }
+  },
+  "reproducibility": {
+    "target_level": "R1_NUMERICAL",
+    "observed_level": "R1_NUMERICAL",
+    "numerical_tolerance": 1e-05,
+    "deterministic_seed": 42,
+    "hardware_match": true
+  },
+  "created_at_utc": "2026-09-03T11:18:06.959754+00:00"
+}

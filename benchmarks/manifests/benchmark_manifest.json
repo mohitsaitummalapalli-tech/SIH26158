@@ -1,0 +1,144 @@
+{
+  "manifest_version": "v2.0.0-LOCKED",
+  "software_commit": "20c62a1",
+  "created_at_utc": "2026-09-03T10:53:00Z",
+  "benchmark_runs": [
+    {
+      "benchmark_id": "BM-SYNTH-CLASS-A-QUARRY-60F-01",
+      "dataset_id": "SYNTH-CLASS-A-QUARRY-60F",
+      "evidence_level": 2,
+      "taxonomy_class": "CLASS_A_SYNTHETIC_CONTROLLED",
+      "software_commit": "20c62a1",
+      "result_state": "PASS",
+      "evaluable_axes": [
+        "A_VISUAL",
+        "B_GEOMETRIC",
+        "C_METRIC_SCALE",
+        "E_TEXTURE",
+        "F_UNCERTAINTY",
+        "G_COMPLETENESS"
+      ],
+      "not_evaluable_axes": [
+        "D_GEOSPATIAL"
+      ],
+      "reference_partition": {
+        "estimation_reference_set": ["SEG_01"],
+        "calibration_reference_set": [],
+        "validation_reference_set": ["SEG_02", "SEG_03"]
+      },
+      "claim_authorization": {
+        "claims_allowed": [
+          "gnss_fitting_residual",
+          "relative_motion_profile",
+          "reprojection_consistency",
+          "segment_scale_accuracy",
+          "surface_mesh_chamfer",
+          "synthetic_recovery_acc",
+          "visual_appearance_psnr"
+        ],
+        "claims_blocked": [
+          "horizontal_checkpoint_rmse",
+          "probabilistic_gaussian_coverage",
+          "radiometric_color_accuracy",
+          "surveyed_3d_accuracy",
+          "universal_drone_accuracy",
+          "vertical_checkpoint_rmse"
+        ],
+        "policy_status": "PASS",
+        "violation_reasons": []
+      },
+      "metrics": {
+        "geometric": {
+          "p2p_rmse_m": 0.0,
+          "chamfer_distance_m": 0.0,
+          "hausdorff_max_m": 0.0,
+          "hausdorff_95_m": 0.0,
+          "precision_at_5cm": 1.0,
+          "recall_at_5cm": 1.0,
+          "f1_score_at_5cm": 1.0
+        },
+        "metric_scale": {
+          "rmse_relative_error": 0.0,
+          "max_relative_error_pct": 0.0,
+          "segment_count": 3
+        },
+        "trajectory": {
+          "ate_raw_rmse_m": 0.0,
+          "ate_sim3_aligned_rmse_m": 0.0,
+          "rpe_translational_drift_rmse_m": 0.0
+        },
+        "perturbation_audit": {
+          "perturbation_type": "GNSS_GAUSSIAN_NOISE",
+          "magnitude": 1.0,
+          "regime": "SUPPORTED_ENVELOPE"
+        }
+      },
+      "timing_profile": {
+        "total_wall_clock_sec": 0.0084,
+        "input_frames": 60,
+        "pipeline_fps": 7142.8,
+        "latency_tier": "REAL_TIME"
+      },
+      "reproducibility": {
+        "target_level": "R1_NUMERICAL",
+        "observed_level": "R1_NUMERICAL",
+        "numerical_tolerance": 1e-05,
+        "deterministic_seed": 42
+      }
+    },
+    {
+      "benchmark_id": "BM-REAL-FLIGHT-AUDIT-01",
+      "dataset_id": "REAL-FLIGHT-UNAVAILABLE",
+      "evidence_level": 0,
+      "taxonomy_class": "CLASS_E_REAL_UNREFERENCED",
+      "software_commit": "20c62a1",
+      "result_state": "INSUFFICIENT_EVIDENCE",
+      "evaluable_axes": [
+        "A_VISUAL",
+        "B_GEOMETRIC",
+        "E_TEXTURE",
+        "F_UNCERTAINTY"
+      ],
+      "not_evaluable_axes": [
+        "C_METRIC_SCALE",
+        "D_GEOSPATIAL",
+        "G_COMPLETENESS"
+      ],
+      "claim_authorization": {
+        "claims_allowed": [
+          "relative_motion_profile",
+          "reprojection_consistency",
+          "visual_appearance_psnr"
+        ],
+        "claims_blocked": [
+          "gnss_fitting_residual",
+          "horizontal_checkpoint_rmse",
+          "probabilistic_gaussian_coverage",
+          "radiometric_color_accuracy",
+          "segment_scale_accuracy",
+          "surface_mesh_chamfer",
+          "surveyed_3d_accuracy",
+          "synthetic_recovery_acc",
+          "universal_drone_accuracy",
+          "vertical_checkpoint_rmse"
+        ],
+        "policy_status": "PASS",
+        "violation_reasons": []
+      },
+      "metrics": {
+        "real_data_status": "INSUFFICIENT_EVIDENCE",
+        "message": "No raw flight video or flight telemetry in data/raw/. Real-data evaluation is NOT_EVALUABLE."
+      },
+      "timing_profile": {
+        "total_wall_clock_sec": 0.0001,
+        "input_frames": 0,
+        "pipeline_fps": 0.0,
+        "latency_tier": "NOT_CLASSIFIED"
+      },
+      "reproducibility": {
+        "target_level": "R0_METADATA",
+        "observed_level": "R0_METADATA"
+      }
+    }
+  ]
+}
