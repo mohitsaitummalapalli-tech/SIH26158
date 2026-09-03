@@ -123,6 +123,19 @@ from src.geometry.dense_fusion import (
     DensePointFusionEngine,
 )
 
+from src.geometry.surface_reconstruction import (
+    SurfaceFailureReason,
+    NormalEstimationStatus,
+    SurfaceReconstructionStatus,
+    SurfaceReconstructionConfig,
+    NormalEstimationResult,
+    SurfaceMesh,
+    SurfaceReconstructionResult,
+    DensePointCloudValidator,
+    LocalPCANormalEstimator,
+    AlphaComplexSurfaceReconstructor,
+)
+
 __all__ = [
     "EvaluationLevel",
     "PipelineStageStatus",
@@ -220,4 +233,14 @@ __all__ = [
     "DensePointCluster",
     "DenseFusionResult",
     "DensePointFusionEngine",
+    "SurfaceFailureReason",
+    "NormalEstimationStatus",
+    "SurfaceReconstructionStatus",
+    "SurfaceReconstructionConfig",
+    "NormalEstimationResult",
+    "SurfaceMesh",
+    "SurfaceReconstructionResult",
+    "DensePointCloudValidator",
+    "LocalPCANormalEstimator",
+    "AlphaComplexSurfaceReconstructor",
 ]
